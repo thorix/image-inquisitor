@@ -51,6 +51,13 @@ type Config struct {
 	ExcludeImageRegistriesStr string
 	ExcludeImageRegistries    map[string]struct{}
 
+	// Harbor is self-hosted, so its hostnames cannot be inferred the way
+	// quay.io/ghcr.io/docker.io can. Without this, images on a Harbor registry
+	// fall through to the "no matching registry" path and report a bare tag
+	// with no timestamp and no latest version.
+	HarborRegistriesStr string
+	HarborRegistries    []string
+
 	// Reports Configuration
 	ReportOutputsStr string
 	ReportOutputs    ReportOutputs
@@ -153,6 +160,10 @@ func LoadConfig() Config {
 		"exclude-image-registries",
 		"",
 		"Comma-separated list of image registries to exclude")
+	flag.StringVar(&config.HarborRegistriesStr,
+		"harbor-registries",
+		"",
+		"Comma-separated list of Harbor registry hostnames (self-hosted, so they cannot be auto-detected). Set HARBOR_USERNAME/HARBOR_PASSWORD for private projects.")
 
 	flag.Parse()
 
@@ -162,6 +173,15 @@ func LoadConfig() Config {
 
 	if config.KubernetesSourceExcludeNamespacesStr != "" {
 		config.KubernetesSourceExcludeNamespaces = strings.Split(config.KubernetesSourceExcludeNamespacesStr, ",")
+	}
+
+	if config.HarborRegistriesStr != "" {
+		for _, host := range strings.Split(config.HarborRegistriesStr, ",") {
+			host = strings.TrimSpace(host)
+			if host != "" {
+				config.HarborRegistries = append(config.HarborRegistries, host)
+			}
+		}
 	}
 
 	if config.ExcludeImageRegistriesStr != "" {

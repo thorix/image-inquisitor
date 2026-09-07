@@ -101,7 +101,7 @@ func main() {
 		wg.Add(1)
 		go func(wg *sync.WaitGroup) {
 			defer wg.Done()
-			registryQueries := querier.NewRegistryQuerier()
+			registryQueries := querier.NewRegistryQuerier(cfg.HarborRegistries)
 			for imageFullName, image := range inventory.ImageComponents() {
 				registryReport, err := registryQueries.FetchReport(image)
 				if err != nil {

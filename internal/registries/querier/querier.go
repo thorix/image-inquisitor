@@ -5,6 +5,7 @@ import (
 	"github.com/bartlettc22/image-inquisitor/internal/registries"
 	"github.com/bartlettc22/image-inquisitor/internal/registries/docker"
 	"github.com/bartlettc22/image-inquisitor/internal/registries/ghcr"
+	"github.com/bartlettc22/image-inquisitor/internal/registries/harbor"
 	"github.com/bartlettc22/image-inquisitor/internal/registries/quay"
 	log "github.com/sirupsen/logrus"
 )
@@ -18,11 +19,14 @@ type RegistryQuerier struct {
 	registries []Registry
 }
 
-func NewRegistryQuerier() *RegistryQuerier {
+func NewRegistryQuerier(harborHosts []string) *RegistryQuerier {
 	rq := &RegistryQuerier{}
 	rq.addRegistry(quay.NewRegistry())
 	rq.addRegistry(docker.NewRegistry())
 	rq.addRegistry(ghcr.NewRegistry())
+	// Registered last: it only matches hosts explicitly configured as Harbor,
+	// so it never shadows the well-known registries above.
+	rq.addRegistry(harbor.NewRegistry(harborHosts))
 	return rq
 }
 
