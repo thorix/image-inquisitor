@@ -13,6 +13,7 @@ import (
 	"github.com/bartlettc22/image-inquisitor/internal/sources"
 	exportsources "github.com/bartlettc22/image-inquisitor/internal/sources/export"
 	importsources "github.com/bartlettc22/image-inquisitor/internal/sources/import"
+	sourcetypes "github.com/bartlettc22/image-inquisitor/internal/sources/types"
 	"github.com/bartlettc22/image-inquisitor/internal/trivy"
 	log "github.com/sirupsen/logrus"
 )
@@ -68,21 +69,32 @@ func main() {
 		}
 	}
 
-	// if cfg.ReportOutputs.Contains(reports.ReportTypeImageKubernetes) {
-	// 	kubernetesSourceReport, err := inventory.GetKubernetesSourceReports(ctx)
-	// 	if err != nil {
-	// 		log.Fatalf("%v", err)
-	// 	}
-	// 	for image, kubeReport := range kubernetesSourceReport.KubeReports() {
-	// 		masterImageReportList.AddImageReport(reports.ReportTypeImageKubernetes, image, kubeReport)
-	// 	}
-	// }
-
 	wg := &sync.WaitGroup{}
 	mu := &sync.Mutex{}
 
 	masterSummaryReportList := reports.NewSummaryReportList(start)
 	masterImageReportList := reports.NewImageReportList(start)
+
+	// Maps each image to the Kubernetes workloads running it. This is what turns
+	// a CVE list into a work queue -- "this image has 5 criticals" is far less
+	// actionable than "this image has 5 criticals and 6 Deployments run it".
+	//
+	// Previously commented out. It could not simply be uncommented because it
+	// referenced masterImageReportList above its declaration; moving it here is
+	// the whole fix.
+	if cfg.ReportOutputs.Contains(reports.ReportTypeImageKubernetes) {
+		// The old GetKubernetesSourceReports() helper no longer exists -- the
+		// kubernetes source now folds its data into the inventory as
+		// ImageSourceDetails, keyed by source type. The workload detail is still
+		// there, so read it back out from the inventory.
+		for imageFullName, details := range inventory.ImageDetails {
+			for _, sourceDetails := range details.ImageSourceDetailsByID {
+				if kubeReport, ok := sourceDetails.SourcesByType[sourcetypes.ImageSourceTypeKubernetes]; ok {
+					masterImageReportList.AddImageReport(reports.ReportTypeImageKubernetes, imageFullName, kubeReport)
+				}
+			}
+		}
+	}
 
 	if cfg.ReportOutputs.Contains(reports.ReportTypeImageRegistry) ||
 		cfg.ReportOutputs.Contains(reports.ReportTypeSummaryRegistry) {
@@ -122,11 +134,25 @@ func main() {
 	}
 	wg.Wait()
 
-	if cfg.ReportOutputs.Contains(reports.ReportTypeImageSummary) {
+	// Summary reports are derived from the per-image reports, so only generate
+	// them when a summary-type report was actually asked for.
+	wantSummary := false
+	for _, rt := range cfg.ReportOutputs {
+		if rt.IsSummaryReportType() {
+			wantSummary = true
+			break
+		}
+	}
+	if wantSummary {
 		masterSummaryReportList.GenerateSummaryReports(inventory.ImageComponents(), masterImageReportList)
 		masterSummaryReportList.Output()
-		masterImageReportList.Output()
 	}
+
+	// Always emit the per-image reports. Previously BOTH Output() calls sat
+	// behind a ReportTypeImageSummary check, so asking for any other report on
+	// its own produced a run that did all the work, logged "done", and printed
+	// nothing -- which reads as a config mistake rather than a bug.
+	masterImageReportList.Output()
 
 	log.Infof("done")
 }
