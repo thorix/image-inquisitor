@@ -3,12 +3,16 @@
 ARG GO_VERSION
 ARG TRIVY_VERSION
 ARG VERSION
+# Base image registry. Defaults to docker.io so upstream builds are unchanged,
+# but allows pointing at a pull-through cache (e.g. a Harbor proxy project) so
+# repeated builds do not hit Docker Hub rate limits.
+ARG BASE_REGISTRY=docker.io
 
-FROM aquasec/trivy:${TRIVY_VERSION} as trivy
+FROM ${BASE_REGISTRY}/aquasec/trivy:${TRIVY_VERSION} as trivy
 
 # ----
 
-FROM golang:${GO_VERSION} as builder
+FROM ${BASE_REGISTRY}/library/golang:${GO_VERSION} as builder
 
 WORKDIR /src
 COPY . /src
@@ -28,7 +32,7 @@ RUN mkdir -p /data/tmp
 
 # ----
 
-FROM debian:bookworm AS certs
+FROM ${BASE_REGISTRY}/library/debian:bookworm AS certs
 
 RUN apt-get update \
 	&& apt-get install -y ca-certificates \
