@@ -127,9 +127,18 @@ func formatReport(runResults RunResults) TrivyReport {
 
 			created := r.Report.Metadata.ImageConfig.Created.Time
 			ageDays := 0
-			// A zero timestamp means the image config carried no created date;
-			// reporting that as an age of ~20000 days would be worse than 0.
-			if !created.IsZero() {
+			// Treat an absent or placeholder created date as unknown (0) rather
+			// than as a very old image.
+			//
+			// Two cases produce a bogus age. Go's zero time (year 1) means the
+			// field was missing. The Unix epoch means the build deliberately
+			// pinned it: reproducible builds commonly set created to
+			// 1970-01-01 so the image digest is stable, and
+			// registry.k8s.io/external-dns does exactly this -- it reported an
+			// age of 20705 days. Left unguarded such an image sorts to the top
+			// of any age ranking and colours red permanently, which is worse
+			// than admitting the age is unknown.
+			if !created.IsZero() && created.Year() > 2000 {
 				ageDays = int(time.Since(created).Hours() / 24)
 			}
 
