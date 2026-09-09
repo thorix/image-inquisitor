@@ -9,8 +9,14 @@ import (
 type TrivyReport map[string]*TrivyImageReport
 
 type TrivyImageReport struct {
-	ImageCreated time.Time    `json:"imageCreated"`
-	ImageIssues  *ImageIssues `json:"imageIssues"`
+	ImageCreated time.Time `json:"imageCreated"`
+	// Age of the image in whole days at report time. Derived from ImageCreated,
+	// but emitted as a number because consumers cannot threshold or sort on a
+	// timestamp: Grafana compares thresholds against absolute values, so
+	// colouring "older than N days" from a date would need a hardcoded cutoff
+	// that goes stale. A plain integer is directly sortable and colourable.
+	AgeDays     int          `json:"ageDays"`
+	ImageIssues *ImageIssues `json:"imageIssues"`
 }
 
 type ImageIssues struct {
@@ -119,8 +125,17 @@ func formatReport(runResults RunResults) TrivyReport {
 				}
 			}
 
+			created := r.Report.Metadata.ImageConfig.Created.Time
+			ageDays := 0
+			// A zero timestamp means the image config carried no created date;
+			// reporting that as an age of ~20000 days would be worse than 0.
+			if !created.IsZero() {
+				ageDays = int(time.Since(created).Hours() / 24)
+			}
+
 			trivyReport[r.Image] = &TrivyImageReport{
-				ImageCreated: r.Report.Metadata.ImageConfig.Created.Time,
+				ImageCreated: created,
+				AgeDays:      ageDays,
 				ImageIssues:  issues,
 			}
 		}
