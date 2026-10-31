@@ -3,9 +3,12 @@ package kubernetes
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -117,5 +120,38 @@ func TestNothingHangs(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("GetReport hung")
+	}
+}
+
+// TestEarlyListFailuresDoNotRaceNamespaceSetup has every List fail at once in
+// many namespaces, so early namespaces record failures while later ones are
+// still being set up. Run with -race.
+func TestEarlyListFailuresDoNotRaceNamespaceSetup(t *testing.T) {
+	out := log.StandardLogger().Out
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(out)
+
+	var names []string
+	for i := 0; i < 200; i++ {
+		names = append(names, fmt.Sprintf("ns-%03d", i))
+	}
+	cs := newFakeCS(names, func(kind, ns string, attempt int) error {
+		if kind == "namespaces" {
+			return nil
+		}
+		return apierrors.NewForbidden(schema.GroupResource{Resource: kind}, "", errors.New("no"))
+	})
+	_, stats, err := newTestK(cs).GetReport(context.Background())
+	if !errors.Is(err, ErrAllListsFailed) {
+		t.Fatalf("err = %v, want ErrAllListsFailed", err)
+	}
+	if len(stats.Namespaces) != len(names) || len(stats.FailedLists) != len(names) {
+		t.Fatalf("got %d namespaces, %d FailedLists entries, want %d",
+			len(stats.Namespaces), len(stats.FailedLists), len(names))
+	}
+	for _, ns := range names {
+		if stats.FailedLists[ns] != listKindsPerNamespace {
+			t.Fatalf("FailedLists[%s] = %d, want %d", ns, stats.FailedLists[ns], listKindsPerNamespace)
+		}
 	}
 }

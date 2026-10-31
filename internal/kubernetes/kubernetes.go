@@ -177,14 +177,18 @@ func (k *Kubernetes) GetReport(ctx context.Context) (KubernetesReport, *ListStat
 		statsMu.Unlock()
 	}
 
-	wg := sync.WaitGroup{}
+	// Record every namespace before any goroutine starts, so fail() is the
+	// only writer of stats while they run.
 	for _, nsItem := range namespaces.Items {
 		if !k.included(nsItem.Name) {
 			continue
 		}
 		stats.Namespaces = append(stats.Namespaces, nsItem.Name)
 		stats.FailedLists[nsItem.Name] = 0
+	}
 
+	wg := sync.WaitGroup{}
+	for _, nsName := range stats.Namespaces {
 		wg.Add(1)
 		go func(namespace string) {
 			defer wg.Done()
@@ -304,7 +308,7 @@ func (k *Kubernetes) GetReport(ctx context.Context) (KubernetesReport, *ListStat
 			}
 
 			log.Debugf("DONE scanning Kubernetes namespace: %s", namespace)
-		}(nsItem.Name)
+		}(nsName)
 	}
 
 	wg.Wait()
