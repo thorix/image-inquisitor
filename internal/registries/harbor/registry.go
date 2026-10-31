@@ -138,22 +138,22 @@ func (r *HarborRegistry) fetchTags(host, project, repo string) ([]*registries.Ta
 			req.SetBasicAuth(r.username, r.password)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := registries.HTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			registries.DrainClose(resp)
 			return nil, fmt.Errorf("failed to get artifacts for %s/%s: %s", project, repo, resp.Status)
 		}
 
 		var artifacts artifactsResponse
-		if err := json.NewDecoder(resp.Body).Decode(&artifacts); err != nil {
-			resp.Body.Close()
+		err = json.NewDecoder(resp.Body).Decode(&artifacts)
+		registries.DrainClose(resp)
+		if err != nil {
 			return nil, err
 		}
-		resp.Body.Close()
 
 		if len(artifacts) == 0 {
 			break

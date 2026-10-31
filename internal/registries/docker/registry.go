@@ -3,6 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/bartlettc22/image-inquisitor/internal/imageUtils"
@@ -31,11 +32,19 @@ type TagResponseResult struct {
 }
 
 type DockerIORegistry struct {
+	baseURL           string
+	client            *http.Client
 	workerRequestChan chan *WorkerRequest
 }
 
 func NewRegistry() *DockerIORegistry {
+	return newRegistryWith("https://hub.docker.com", registries.HTTPClient)
+}
+
+func newRegistryWith(baseURL string, client *http.Client) *DockerIORegistry {
 	registry := &DockerIORegistry{
+		baseURL:           baseURL,
+		client:            client,
 		workerRequestChan: make(chan *WorkerRequest),
 	}
 	registry.Run()
@@ -82,7 +91,7 @@ func (r *DockerIORegistry) fetchLatestSemanticVersion(owner, repository string, 
 
 func (r *DockerIORegistry) getTag(owner, repository, tag string) (*registries.Tag, error) {
 
-	firstURL := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/%s/tags/%s/", owner, repository, tag)
+	firstURL := fmt.Sprintf("%s/v2/repositories/%s/%s/tags/%s/", r.baseURL, owner, repository, tag)
 
 	responseBodyChan := make(chan *WorkerResponse, 1)
 	defer close(responseBodyChan)
@@ -93,6 +102,9 @@ func (r *DockerIORegistry) getTag(owner, repository, tag string) (*registries.Ta
 	}
 
 	rawResponse := <-responseBodyChan
+	if rawResponse.err != nil {
+		return nil, rawResponse.err
+	}
 	response := &TagResponseResult{}
 	err := json.Unmarshal(rawResponse.bodyBytes, response)
 	if err != nil {
@@ -115,13 +127,16 @@ func (r *DockerIORegistry) getAllTags(owner, repository string, stopAt time.Time
 
 		// Although undocumented, it seems that setting ordering=last_updated returns the results with the newest first
 		// We can use this to stop searching once we've passed the last updated on the current version
-		url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/%s/tags/?ordering=last_updated&page_size=%d&page=%d", owner, repository, pageSize, page)
+		url := fmt.Sprintf("%s/v2/repositories/%s/%s/tags/?ordering=last_updated&page_size=%d&page=%d", r.baseURL, owner, repository, pageSize, page)
 		r.workerRequestChan <- &WorkerRequest{
 			url:          url,
 			responseChan: responseBodyChan,
 		}
 		// Wait for first response
 		rawResponse := <-responseBodyChan
+		if rawResponse.err != nil {
+			return nil, rawResponse.err
+		}
 		response := &TagsResponseList{}
 		err := json.Unmarshal(rawResponse.bodyBytes, response)
 		if err != nil {

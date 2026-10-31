@@ -79,18 +79,20 @@ func FetchTags(owner, repository, tag string) ([]*registries.Tag, error) {
 		if tag != "" {
 			url = url + fmt.Sprintf("&specificTag=%s", tag)
 		}
-		resp, err := http.Get(url)
+		resp, err := registries.HTTPClient.Get(url)
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			registries.DrainClose(resp)
 			return nil, fmt.Errorf("failed to get tags: %s", resp.Status)
 		}
 
 		var result TagsResponse
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		registries.DrainClose(resp)
+		if err != nil {
 			return nil, err
 		}
 

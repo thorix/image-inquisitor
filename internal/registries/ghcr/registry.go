@@ -147,15 +147,9 @@ func (r *GHCRRegistry) getTag(owner, repository, tag string) (*registries.Tag, e
 	if manifestIndexResponse.MediaType == "application/vnd.oci.image.index.v1+json" {
 		// Newer images respond with an index of manifests (arm, amd64, etc.)
 		// So an additional query is required to get the config
-		var desiredManifest *manifestResponseManifest
-		for _, manifest := range manifestIndexResponse.Manifests {
-			if manifest.Platform.Architecture == "amd64" {
-				desiredManifest = manifest
-				break
-			}
-		}
-		if desiredManifest == nil {
-			return nil, fmt.Errorf("unable to find github manifest at: '%s'", url)
+		desiredManifest, err := selectPlatformManifest(manifestIndexResponse)
+		if err != nil {
+			return nil, fmt.Errorf("%v at: '%s'", err, url)
 		}
 
 		url = fmt.Sprintf("https://ghcr.io/v2/%s/%s/manifests/%s", owner, repository, desiredManifest.Digest)
@@ -172,11 +166,17 @@ func (r *GHCRRegistry) getTag(owner, repository, tag string) (*registries.Tag, e
 			return nil, err
 		}
 
-		configDigest = manifestResponse.Config.Digest
+		configDigest, err = configDigestOf(manifestResponse.Config, url)
+		if err != nil {
+			return nil, err
+		}
 
 	} else if manifestIndexResponse.MediaType == "application/vnd.docker.distribution.manifest.v2+json" {
 		// Older images respond with the manifest directly
-		configDigest = manifestIndexResponse.Config.Digest
+		configDigest, err = configDigestOf(manifestIndexResponse.Config, url)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		return nil, fmt.Errorf("unknown index media type in response '%s': %v", url, manifestIndexResponse.MediaType)
 	}
@@ -190,6 +190,32 @@ func (r *GHCRRegistry) getTag(owner, repository, tag string) (*registries.Tag, e
 		Tag:          tag,
 		TagTimestamp: manifestConfigResponse.Created,
 	}, nil
+}
+
+// selectPlatformManifest picks the amd64 entry from an index. Entries without
+// platform data (attestations, for example) are skipped rather than
+// dereferenced.
+func selectPlatformManifest(idx *manifestIndexResponse) (*manifestResponseManifest, error) {
+	if idx != nil {
+		for _, m := range idx.Manifests {
+			if m == nil || m.Platform == nil {
+				continue
+			}
+			if m.Platform.Architecture == "amd64" {
+				return m, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("unable to find amd64 manifest")
+}
+
+// configDigestOf returns the config digest of a manifest, or an error when the
+// manifest carries no config.
+func configDigestOf(cfg *manifestResponseConfig, url string) (string, error) {
+	if cfg == nil {
+		return "", fmt.Errorf("manifest has no config at: '%s'", url)
+	}
+	return cfg.Digest, nil
 }
 
 func (r *GHCRRegistry) getManifestConfig(owner, repository, digest string) (*manifestConfigResponse, error) {
@@ -214,17 +240,19 @@ func (r *GHCRRegistry) get(owner, repository, url string, acceptHeaders []string
 	token, ok := r.tokenCache.Load(userImage)
 	if !ok {
 		tokenURL := fmt.Sprintf("https://ghcr.io/token?scope=repository:%s:pull", userImage)
-		resp, err := http.Get(tokenURL)
+		resp, err := registries.HTTPClient.Get(tokenURL)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to get token at '%s': %v", tokenURL, err)
 		}
-		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
+			registries.DrainClose(resp)
 			return nil, "", fmt.Errorf("failed to get token at '%s': %s", tokenURL, resp.Status)
 		}
 
 		var tokenResponse tokenResponse
-		if err := json.NewDecoder(resp.Body).Decode(&tokenResponse); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&tokenResponse)
+		registries.DrainClose(resp)
+		if err != nil {
 			return nil, "", fmt.Errorf("failed to decode body at '%s': %v", tokenURL, err)
 		}
 		r.tokenCache.Store(userImage, tokenResponse.Token)
@@ -241,13 +269,11 @@ func (r *GHCRRegistry) get(owner, repository, url string, acceptHeaders []string
 		request.Header.Set("Accept", acceptHeader)
 	}
 
-	client := &http.Client{}
-
-	resp, err := client.Do(request)
+	resp, err := registries.HTTPClient.Do(request)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get request at '%s': %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer registries.DrainClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("failed to get request at '%s': %s", url, resp.Status)

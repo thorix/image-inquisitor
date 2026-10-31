@@ -2,8 +2,30 @@ package registries
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"time"
 )
+
+// HTTPClient is the one client every registry uses. The overall timeout covers
+// connect, headers and the full body read, so a registry that accepts the
+// connection and then stalls cannot hang a pass. Shared so keep-alive
+// connections are pooled across calls.
+var HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// maxDrain bounds how much of an unread body DrainClose will consume to let the
+// connection be reused; beyond that closing is cheaper than draining.
+const maxDrain = 1 << 20
+
+// DrainClose reads any remaining body and closes it, so the underlying
+// connection can be reused. Safe on a nil response or nil body.
+func DrainClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrain))
+	_ = resp.Body.Close()
+}
 
 type Tag struct {
 	Tag          string

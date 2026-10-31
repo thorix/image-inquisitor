@@ -1,6 +1,8 @@
 package querier
 
 import (
+	"fmt"
+
 	"github.com/bartlettc22/image-inquisitor/internal/imageUtils"
 	"github.com/bartlettc22/image-inquisitor/internal/registries"
 	"github.com/bartlettc22/image-inquisitor/internal/registries/docker"
@@ -38,7 +40,7 @@ func (rq *RegistryQuerier) FetchReport(image *imageUtils.Image) (*registries.Reg
 	log.Debugf("fetching image metadata from registry for: %s", image.Image)
 	for _, reg := range rq.registries {
 		if reg.IsRegistry(image.Registry) {
-			report, err := reg.FetchReport(image)
+			report, err := safeFetchReport(reg, image)
 			if err != nil {
 				return nil, err
 			}
@@ -55,4 +57,17 @@ func (rq *RegistryQuerier) FetchReport(image *imageUtils.Image) (*registries.Reg
 	return &registries.RegistryImageReport{
 		Tag: image.Tag,
 	}, nil
+}
+
+// safeFetchReport turns a panic inside one registry's lookup (for example a
+// malformed registry response) into an error for that image, so it cannot
+// take down the whole pass.
+func safeFetchReport(reg Registry, image *imageUtils.Image) (report *registries.RegistryImageReport, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			report = nil
+			err = fmt.Errorf("registry lookup panicked for %s: %v", image.Image, p)
+		}
+	}()
+	return reg.FetchReport(image)
 }

@@ -1,6 +1,9 @@
 package ghcr
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestParseLinkHeader(t *testing.T) {
 
@@ -22,5 +25,37 @@ func TestParseLinkHeader(t *testing.T) {
 		if result != tc.expected {
 			t.Errorf("link for `%s` not correct; want `%s`, got `%s`", tc.header, tc.expected, result)
 		}
+	}
+}
+
+func TestSelectPlatformManifestNilPlatform(t *testing.T) {
+	var idx manifestIndexResponse
+	if err := json.Unmarshal([]byte(`{"manifests":[{"digest":"a"},{"digest":"b","platform":{"architecture":"amd64"}}]}`), &idx); err != nil {
+		t.Fatal(err)
+	}
+	m, err := selectPlatformManifest(&idx)
+	if err != nil || m.Digest != "b" {
+		t.Fatalf("got %v, %v; want digest b", m, err)
+	}
+
+	var only manifestIndexResponse
+	if err := json.Unmarshal([]byte(`{"manifests":[{"digest":"a"}]}`), &only); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selectPlatformManifest(&only); err == nil {
+		t.Fatal("expected error for index with no platform entries")
+	}
+}
+
+func TestConfigDigestNil(t *testing.T) {
+	var m manifestResponse
+	if err := json.Unmarshal([]byte(`{}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configDigestOf(m.Config, "u"); err == nil {
+		t.Fatal("expected error for manifest without config")
+	}
+	if d, err := configDigestOf(&manifestResponseConfig{Digest: "x"}, "u"); err != nil || d != "x" {
+		t.Fatalf("got %q, %v", d, err)
 	}
 }

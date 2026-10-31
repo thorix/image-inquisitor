@@ -7,8 +7,26 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/bartlettc22/image-inquisitor/internal/registries"
 	log "github.com/sirupsen/logrus"
 )
+
+const (
+	// maxRateLimitRetries bounds how many times one request is retried after
+	// being rate limited before the worker reports an error.
+	maxRateLimitRetries = 5
+
+	minRetryWait = 2 * time.Second
+	maxRetryWait = 5 * time.Minute
+	defaultWait  = 60 * time.Second
+
+	// Retry-After integers at or above this are Unix epoch seconds rather than
+	// a delay in seconds.
+	epochThreshold = 1_000_000_000
+)
+
+// sleep is a variable so tests can replace it.
+var sleep = time.Sleep
 
 type WorkerRequest struct {
 	url          string
@@ -26,68 +44,75 @@ func (r *DockerIORegistry) Run() {
 
 	// Start worker goroutines
 	for i := 0; i < numWorkers; i++ {
-		go worker(r.workerRequestChan)
+		go r.worker()
 	}
 }
 
-func worker(requestChan chan *WorkerRequest) {
-
-	for request := range requestChan {
-		for {
-			resp, err := http.Get(request.url)
-			if err != nil {
-				request.responseChan <- &WorkerResponse{
-					err: err,
-				}
-				break
-			}
-			defer resp.Body.Close()
-
-			// If we're being throttled, wait until the timer resets
-			if resp.StatusCode == http.StatusTooManyRequests {
-				waitForRateLimiter(resp.Header)
-				continue
-			}
-
-			if resp.StatusCode != http.StatusOK {
-				request.responseChan <- &WorkerResponse{
-					err: fmt.Errorf("failed to get tags for '%s': %s", request.url, resp.Status),
-				}
-				break
-			}
-
-			bodyBytes, err := io.ReadAll(resp.Body)
-			if err != nil {
-				request.responseChan <- &WorkerResponse{
-					err: fmt.Errorf("failed to read http body for '%s': %s", request.url, resp.Status),
-				}
-				break
-			}
-			request.responseChan <- &WorkerResponse{
-				bodyBytes: bodyBytes,
-			}
-			break
-		}
+func (r *DockerIORegistry) worker() {
+	for request := range r.workerRequestChan {
+		request.responseChan <- r.fetch(request.url)
 	}
 }
 
-func waitForRateLimiter(header http.Header) {
+// fetch performs one GET, retrying while rate limited (at most
+// maxRateLimitRetries times). Every response body is drained and closed.
+func (r *DockerIORegistry) fetch(url string) *WorkerResponse {
+	retries := 0
+	for {
+		resp, err := r.client.Get(url)
+		if err != nil {
+			return &WorkerResponse{err: err}
+		}
 
-	// Default if headers not present
-	waitFor := time.Duration(60 * time.Second)
-
-	// Spec says use X-Retry-After but that doesn't seem to exist
-	if retryAfter, ok := header[http.CanonicalHeaderKey("Retry-After")]; ok {
-		if len(retryAfter) >= 1 {
-			retryAfterInt, err := strconv.Atoi(retryAfter[0])
-			if err != nil {
-				log.Warnf("error converting hub.docker.com X-Retry-After header to int: %v", retryAfter[0])
-				return
+		// If we're being throttled, wait until the limit resets
+		if resp.StatusCode == http.StatusTooManyRequests {
+			wait := retryAfter(resp.Header, time.Now())
+			registries.DrainClose(resp)
+			if retries >= maxRateLimitRetries {
+				return &WorkerResponse{err: fmt.Errorf("rate limited by docker hub: gave up after %d retries", maxRateLimitRetries)}
 			}
-			retryAfterTime := time.Unix(int64(retryAfterInt), 0)
-			waitFor = time.Until(retryAfterTime)
+			retries++
+			log.Debugf("waiting %s for hub.docker.com rate limit", wait)
+			sleep(wait)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			registries.DrainClose(resp)
+			return &WorkerResponse{err: fmt.Errorf("failed to get tags for '%s': %s", url, resp.Status)}
+		}
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		registries.DrainClose(resp)
+		if err != nil {
+			return &WorkerResponse{err: fmt.Errorf("failed to read http body for '%s': %v", url, err)}
+		}
+		return &WorkerResponse{bodyBytes: bodyBytes}
+	}
+}
+
+// retryAfter interprets a Retry-After header: an integer below 1e9 is a delay in
+// seconds, a larger integer is a Unix epoch, anything else is tried as an
+// HTTP-date. Missing or unparseable values wait 60 s. The result is floored at
+// 2 s and clamped at 5 min.
+func retryAfter(h http.Header, now time.Time) time.Duration {
+	wait := defaultWait
+	if v := h.Get("Retry-After"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if n >= epochThreshold {
+				wait = time.Unix(n, 0).Sub(now)
+			} else {
+				wait = time.Duration(n) * time.Second
+			}
+		} else if t, err := http.ParseTime(v); err == nil {
+			wait = t.Sub(now)
 		}
 	}
-	log.Debugf("waiting for hub.docker.com rate limit in %s seconds", waitFor.String())
-	time.Sleep(waitFor)
+	if wait < minRetryWait {
+		wait = minRetryWait
+	}
+	if wait > maxRetryWait {
+		wait = maxRetryWait
+	}
+	return wait
 }
