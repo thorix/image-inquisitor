@@ -59,7 +59,7 @@ func TestNoEndpointIsNotAnError(t *testing.T) {
 
 func TestRedact(t *testing.T) {
 	cases := map[string]string{
-		"http://u:p@vm.example.lan:8428/api": "http://u:xxxxx@vm.example.lan:8428/api",
+		"http://u:p@vm.example.lan:8428/api": "http://u:xxxxx@vm.example.lan:8428/api", // trufflehog:ignore
 		"http://vm.example.lan:8428/api":     "http://vm.example.lan:8428/api",
 		"http://[::1%zz/":                    "<unparseable url>",
 	}
@@ -75,7 +75,7 @@ func TestPushErrorRedactsCredentials(t *testing.T) {
 		http.Error(w, "nope", http.StatusBadGateway)
 	}))
 	defer srv.Close()
-	endpoint := strings.Replace(srv.URL, "http://", "http://u:s3cret@", 1)
+	endpoint := strings.Replace(srv.URL, "http://", "http://u:s3cret@", 1) // trufflehog:ignore
 	for _, ep := range []string{endpoint, strings.Replace(endpoint, srv.URL[len("http://"):], "127.0.0.1:1", 1)} {
 		p := NewPublisher(ep)
 		p.Gauge("m", "h", nil, 1)
