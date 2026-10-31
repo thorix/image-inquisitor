@@ -47,6 +47,30 @@ type TrivyImageReport struct {
 	// a label reading "unknown" behave very differently in a label filter, and a
 	// missing one silently removes the image from filtered views.
 	UpgradeState string `json:"upgradeState"`
+
+	// Findings holds one key per vulnerability (not secrets or misconfigurations),
+	// kept in memory only so callers can compare scans without re-parsing the
+	// payload. Never serialised.
+	Findings []FindingKey `json:"-"`
+}
+
+// FindingKey identifies one vulnerability finding on an image.
+type FindingKey struct {
+	VulnerabilityID string
+	PkgName         string
+	Severity        string
+	Fixable         bool
+}
+
+// FixableCounts returns severity counts over the findings that have a fixed version.
+func (r *TrivyImageReport) FixableCounts() ImageIssueSeverity {
+	var c ImageIssueSeverity
+	for _, f := range r.Findings {
+		if f.Fixable {
+			c.AddSeverity(f.Severity)
+		}
+	}
+	return c
 }
 
 // UpgradeState values, re-exported from the registries package so callers of
@@ -86,7 +110,7 @@ type ImageIssueVulnerabilities struct {
 }
 
 type ImageIssueVulnerability struct {
-	VulnerabilityID string     `json:"registry"`
+	VulnerabilityID string     `json:"vulnerabilityID"`
 	Severity        string     `json:"severity"`
 	PkgID           string     `json:"pkgID"`
 	PrimaryURL      string     `json:"primaryURL"`
@@ -135,7 +159,7 @@ func formatReport(runResults RunResults, includeDetail bool) TrivyReport {
 	trivyReport := make(TrivyReport)
 	for _, r := range runResults {
 		if r.Err != nil {
-			log.Errorf("%v; %s", r.Err, r.Output)
+			log.WithFields(log.Fields{"image": r.Image, "phase": "trivy"}).Errorf("%v; %s", r.Err, r.Output)
 			continue
 		}
 		if r.Report != nil {
@@ -146,6 +170,7 @@ func formatReport(runResults RunResults, includeDetail bool) TrivyReport {
 				Total:             &ImageIssueSeverity{},
 			}
 
+			var findings []FindingKey
 			for _, vulnResults := range r.Report.Results {
 				for _, misconfiguration := range vulnResults.Misconfigurations {
 					issues.Misconfigurations.AddSeverity(misconfiguration.Severity)
@@ -160,6 +185,12 @@ func formatReport(runResults RunResults, includeDetail bool) TrivyReport {
 					// reached the total.
 					issues.Vulnerabilities.AddSeverity(vulnerability.Severity)
 					issues.Total.AddSeverity(vulnerability.Severity)
+					findings = append(findings, FindingKey{
+						VulnerabilityID: vulnerability.VulnerabilityID,
+						PkgName:         vulnerability.PkgName,
+						Severity:        vulnerability.Severity,
+						Fixable:         vulnerability.FixedVersion != "",
+					})
 
 					// The per-CVE array is ~100% of the serialised payload and is
 					// never read back by this codebase. Building it unconditionally
@@ -214,6 +245,7 @@ func formatReport(runResults RunResults, includeDetail bool) TrivyReport {
 				ImageCreated: created,
 				AgeDays:      ageDays,
 				ImageIssues:  issues,
+				Findings:     findings,
 			}
 		}
 	}
