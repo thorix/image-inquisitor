@@ -62,6 +62,13 @@ func TestRedact(t *testing.T) {
 		"http://u:p@vm.example.lan:8428/api": "http://u:xxxxx@vm.example.lan:8428/api", // trufflehog:ignore
 		"http://vm.example.lan:8428/api":     "http://vm.example.lan:8428/api",
 		"http://[::1%zz/":                    "<unparseable url>",
+		// Query values and fragments can carry tokens too.
+		"http://vm.example.lan/api?authKey=s3cret&extra_label=job%3Dx": "http://vm.example.lan/api?authKey=xxxxx&extra_label=xxxxx",        // trufflehog:ignore
+		"http://u:p@vm.example.lan/api?access_token=t&token=t2":        "http://u:xxxxx@vm.example.lan/api?access_token=xxxxx&token=xxxxx", // trufflehog:ignore
+		"http://vm.example.lan/api?password=a&password=b":              "http://vm.example.lan/api?password=xxxxx",                         // trufflehog:ignore
+		"http://vm.example.lan/api?key":                                "http://vm.example.lan/api?key=xxxxx",
+		"http://vm.example.lan/api?token=%zz&a=1":                      "http://vm.example.lan/api?a=xxxxx",
+		"http://vm.example.lan/api#key=s3cret":                         "http://vm.example.lan/api",
 	}
 	for in, want := range cases {
 		if got := Redact(in); got != want {
@@ -75,7 +82,7 @@ func TestPushErrorRedactsCredentials(t *testing.T) {
 		http.Error(w, "nope", http.StatusBadGateway)
 	}))
 	defer srv.Close()
-	endpoint := strings.Replace(srv.URL, "http://", "http://u:s3cret@", 1) // trufflehog:ignore
+	endpoint := strings.Replace(srv.URL, "http://", "http://u:s3cret@", 1) + "/api?authKey=t0ken" // trufflehog:ignore
 	for _, ep := range []string{endpoint, strings.Replace(endpoint, srv.URL[len("http://"):], "127.0.0.1:1", 1)} {
 		p := NewPublisher(ep)
 		p.Gauge("m", "h", nil, 1)
@@ -85,6 +92,9 @@ func TestPushErrorRedactsCredentials(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "s3cret") {
 			t.Errorf("push error leaks the password: %v", err)
+		}
+		if strings.Contains(err.Error(), "t0ken") {
+			t.Errorf("push error leaks the query token: %v", err)
 		}
 	}
 }

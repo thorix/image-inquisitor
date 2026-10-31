@@ -79,14 +79,26 @@ func (p *Publisher) Gauge(name, helpText string, labels map[string]string, value
 // Payload returns what would be pushed. Exposed for tests and for --dry-run.
 func (p *Publisher) Payload() string { return p.buf.String() }
 
-// Redact returns raw with any URL password masked, safe to log. A string that
-// does not parse as a URL is replaced entirely, since there is no way to know
-// which part of it is the secret.
+// Redact returns raw with any URL password and every query value masked, and
+// any fragment dropped, safe to log. Query keys are kept so the log still shows
+// which parameters were set; values are all masked because there is no
+// complete list of the names a token can be passed under. A string that does
+// not parse as a URL is replaced entirely, since there is no way to know which
+// part of it is the secret.
 func Redact(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "<unparseable url>"
 	}
+	if u.RawQuery != "" || u.ForceQuery {
+		q := u.Query()
+		for k := range q {
+			q[k] = []string{"xxxxx"}
+		}
+		u.RawQuery = q.Encode()
+		u.ForceQuery = false
+	}
+	u.Fragment, u.RawFragment = "", ""
 	return u.Redacted()
 }
 
@@ -95,7 +107,7 @@ func Redact(raw string) string {
 // A failure here must never fail the scan: the reports have already been
 // written by the time the caller pushes. The caller logs the error and carries
 // on. Errors name the endpoint only in redacted form, because the endpoint may
-// embed basic-auth credentials.
+// embed credentials in its userinfo or query string.
 func (p *Publisher) Push(timeout time.Duration) error {
 	if p.endpoint == "" {
 		return nil
