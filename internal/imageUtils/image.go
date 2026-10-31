@@ -52,7 +52,7 @@ func ParseImage(image string) (*Image, error) {
 		owner = "library"
 		repoWithTag = parts[0]
 	} else {
-		if strings.Contains(parts[0], ".") {
+		if strings.ContainsAny(parts[0], ".:") || parts[0] == "localhost" {
 			registry = parts[0]
 			parts = parts[1:]
 		} else if len(parts) > 2 {

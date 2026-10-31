@@ -57,6 +57,9 @@ func TestParseImage(t *testing.T) {
 			Tag:        "v2",
 			Digest:     "",
 		}, "docker.io/foo/bar:v2", "docker.io/foo/bar:v2"},
+		{"localhost:5000/a/b:1", "", Image{Registry: "localhost:5000", Owner: "a", Repository: "b", Tag: "1"}, "localhost:5000/a/b:1", "localhost:5000/a/b:1"},
+		{"registry:5000/team/app:1", "", Image{Registry: "registry:5000", Owner: "team", Repository: "app", Tag: "1"}, "registry:5000/team/app:1", "registry:5000/team/app:1"},
+		{"localhost/app:2", "", Image{Registry: "localhost", Owner: "", Repository: "app", Tag: "2"}, "localhost/app:2", "localhost/app:2"},
 		{"a/foo/bar", "non-domain as first delimiter", Image{}, "", ""},
 		{"a/foo/bar:v2", "non-domain as first delimiter", Image{}, "", ""},
 		{"a.com/foo/bar", "", Image{

@@ -6,6 +6,7 @@ import (
 
 	importsources "github.com/bartlettc22/image-inquisitor/internal/sources/import"
 	"github.com/bartlettc22/image-inquisitor/internal/sources/types"
+	log "github.com/sirupsen/logrus"
 )
 
 type ImageSourcesConfig struct {
@@ -34,14 +35,18 @@ func GetInventoryFromSources(ctx context.Context, config *ImageSourcesConfig) (*
 			if err != nil {
 				return nil, err
 			}
-			inventory.AddImageSourceDetails(config.SourceID, kubernetesSourceReport)
+			if err := inventory.AddImageSourceDetails(config.SourceID, kubernetesSourceReport); err != nil {
+				log.Warnf("some %s images could not be parsed: %v", sourceType, err)
+			}
 		case types.ImageSourceTypeFile:
 			fileSource := NewFileSource(config.FileSourceConfig)
 			fileSourceReport, err := fileSource.GetReport(ctx)
 			if err != nil {
 				return nil, err
 			}
-			inventory.AddImageSourceDetails(config.SourceID, fileSourceReport)
+			if err := inventory.AddImageSourceDetails(config.SourceID, fileSourceReport); err != nil {
+				log.Warnf("some %s images could not be parsed: %v", sourceType, err)
+			}
 		default:
 			return nil, fmt.Errorf("image source unknown")
 		}
@@ -53,7 +58,9 @@ func GetInventoryFromSources(ctx context.Context, config *ImageSourcesConfig) (*
 			return nil, err
 		}
 		for sourceID, sourceDetailsByImage := range importedInventory {
-			inventory.AddImageSourceDetails(sourceID, sourceDetailsByImage)
+			if err := inventory.AddImageSourceDetails(sourceID, sourceDetailsByImage); err != nil {
+				log.Warnf("some imported images could not be parsed: %v", err)
+			}
 		}
 	}
 
