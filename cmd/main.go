@@ -24,6 +24,7 @@ var registryPassTimeout = flag.Duration("registry-pass-timeout", defaultRegistry
 	"Upper bound on the whole registry pass. Images not answered in time report upgrade state \"unknown\"; the rest of the scan continues. Keep it well under the Job deadline.")
 
 func main() {
+	ignoreSIGPIPE()
 
 	start := time.Now()
 	ctx := context.Background()

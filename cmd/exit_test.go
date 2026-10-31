@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/bartlettc22/image-inquisitor/internal/kubernetes"
@@ -35,5 +37,37 @@ func TestExitCode(t *testing.T) {
 				t.Errorf("exitCode(%+v) = %d, want %d", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+// TestBrokenStdoutPipeExitsReportsFailed runs a child process whose stdout is
+// a pipe with no reader. The write must fail with an error, which maps to
+// exitReportsFailed, rather than the process being killed by SIGPIPE.
+func TestBrokenStdoutPipeExitsReportsFailed(t *testing.T) {
+	if os.Getenv("II_BROKEN_PIPE_CHILD") == "1" {
+		ignoreSIGPIPE()
+		var err error
+		for i := 0; i < 1000 && err == nil; i++ {
+			_, err = fmt.Fprintln(os.Stdout, `{"report":"line"}`)
+		}
+		os.Exit(exitCode(RunStats{ImagesTotal: 1, VulnPassRan: true, ReportsErr: err}))
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestBrokenStdoutPipeExitsReportsFailed$")
+	cmd.Env = append(os.Environ(), "II_BROKEN_PIPE_CHILD=1")
+	cmd.Stdout = w
+	err = cmd.Run()
+	w.Close()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("child: %v, want exit status %d", err, exitReportsFailed)
+	}
+	if got := ee.ExitCode(); got != exitReportsFailed {
+		t.Fatalf("child: %v (exit code %d), want exit status %d", err, got, exitReportsFailed)
 	}
 }
