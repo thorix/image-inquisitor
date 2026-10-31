@@ -1,0 +1,73 @@
+# HELP image_inquisitor_image_workload Always 1. One series per Kubernetes workload container running the image.
+# TYPE image_inquisitor_image_workload gauge
+image_inquisitor_image_workload{container="app",image="example.lan/team/app:1",kind="Deployment",namespace="ns-a",workload="app-one"} 1
+image_inquisitor_image_workload{container="sidecar",image="example.lan/team/app:1",kind="Deployment",namespace="ns-a",workload="app-one"} 1
+image_inquisitor_image_workload{container="app",image="example.lan/team/app:1",kind="Deployment",namespace="ns-a",workload="app-two"} 1
+image_inquisitor_image_workload{container="broken",image="example.lan/team/broken:3",kind="Deployment",namespace="ns-b",workload="broken"} 1
+image_inquisitor_image_workload{container="db",image="example.lan/team/db:2",kind="StatefulSet",namespace="ns-b",workload="db"} 1
+# HELP image_inquisitor_image_info Always 1. Carries the running tag, newest known tag, upgrade state and repository as labels.
+# TYPE image_inquisitor_image_info gauge
+image_inquisitor_image_info{image="example.lan/team/app:1",image_repo="example.lan/team/app",latest_tag="1.1",running_tag="1",upgrade_state="check"} 1
+image_inquisitor_image_info{image="example.lan/team/db:2",image_repo="example.lan/team/db",latest_tag="2",running_tag="2",upgrade_state="current"} 1
+# HELP image_inquisitor_vulnerabilities Vulnerabilities found in a running image, by severity.
+# TYPE image_inquisitor_vulnerabilities gauge
+image_inquisitor_vulnerabilities{image="example.lan/team/app:1",severity="critical"} 1
+image_inquisitor_vulnerabilities{image="example.lan/team/app:1",severity="high"} 2
+image_inquisitor_vulnerabilities{image="example.lan/team/app:1",severity="medium"} 0
+image_inquisitor_vulnerabilities{image="example.lan/team/app:1",severity="low"} 1
+image_inquisitor_vulnerabilities{image="example.lan/team/app:1",severity="unknown"} 0
+image_inquisitor_vulnerabilities{image="example.lan/team/db:2",severity="critical"} 0
+image_inquisitor_vulnerabilities{image="example.lan/team/db:2",severity="high"} 0
+image_inquisitor_vulnerabilities{image="example.lan/team/db:2",severity="medium"} 1
+image_inquisitor_vulnerabilities{image="example.lan/team/db:2",severity="low"} 0
+image_inquisitor_vulnerabilities{image="example.lan/team/db:2",severity="unknown"} 0
+# HELP image_inquisitor_vulnerabilities_fixable Vulnerabilities in a running image that have a fixed version available, by severity.
+# TYPE image_inquisitor_vulnerabilities_fixable gauge
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/app:1",severity="critical"} 1
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/app:1",severity="high"} 1
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/app:1",severity="medium"} 0
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/app:1",severity="low"} 0
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/app:1",severity="unknown"} 0
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/db:2",severity="critical"} 0
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/db:2",severity="high"} 0
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/db:2",severity="medium"} 1
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/db:2",severity="low"} 0
+image_inquisitor_vulnerabilities_fixable{image="example.lan/team/db:2",severity="unknown"} 0
+# HELP image_inquisitor_build_age_days Days since the image was built, omitted when the created date is unusable.
+# TYPE image_inquisitor_build_age_days gauge
+image_inquisitor_build_age_days{image="example.lan/team/app:1"} 40
+image_inquisitor_build_age_days{image="example.lan/team/db:2"} 5
+# HELP image_inquisitor_latest_tag_age_days Days since the newest known tag for this image was published. Below the Renovate soak window means an upgrade is queued rather than neglected.
+# TYPE image_inquisitor_latest_tag_age_days gauge
+image_inquisitor_latest_tag_age_days{image="example.lan/team/app:1"} 10
+image_inquisitor_latest_tag_age_days{image="example.lan/team/db:2"} 3
+# HELP image_inquisitor_scan_failed 1 when the vulnerability scan of a running image failed, else 0.
+# TYPE image_inquisitor_scan_failed gauge
+image_inquisitor_scan_failed{image="example.lan/team/app:1"} 0
+image_inquisitor_scan_failed{image="example.lan/team/broken:3"} 1
+image_inquisitor_scan_failed{image="example.lan/team/db:2"} 0
+# HELP image_inquisitor_images_total Number of distinct images in the inventory.
+# TYPE image_inquisitor_images_total gauge
+image_inquisitor_images_total 3
+# HELP image_inquisitor_scan_failures Failures in the completed scan, by phase.
+# TYPE image_inquisitor_scan_failures gauge
+image_inquisitor_scan_failures{phase="parse"} 2
+image_inquisitor_scan_failures{phase="list"} 1
+image_inquisitor_scan_failures{phase="registry"} 2
+image_inquisitor_scan_failures{phase="trivy"} 1
+# HELP image_inquisitor_inventory_failures Inventory failures in the completed scan, by phase and namespace. No namespace label means the namespace is unknown.
+# TYPE image_inquisitor_inventory_failures gauge
+image_inquisitor_inventory_failures{namespace="ns-a",phase="list"} 0
+image_inquisitor_inventory_failures{namespace="ns-b",phase="list"} 1
+image_inquisitor_inventory_failures{namespace="ns-a",phase="parse"} 1
+image_inquisitor_inventory_failures{namespace="ns-b",phase="parse"} 0
+image_inquisitor_inventory_failures{phase="parse"} 1
+# HELP image_inquisitor_scan_timestamp_seconds Unix time the scan completed. Alert on this going stale.
+# TYPE image_inquisitor_scan_timestamp_seconds gauge
+image_inquisitor_scan_timestamp_seconds 1.79342649e+09
+# HELP image_inquisitor_images_scanned Number of images in the completed scan.
+# TYPE image_inquisitor_images_scanned gauge
+image_inquisitor_images_scanned 2
+# HELP image_inquisitor_scan_duration_seconds Wall-clock duration of the scan.
+# TYPE image_inquisitor_scan_duration_seconds gauge
+image_inquisitor_scan_duration_seconds 90

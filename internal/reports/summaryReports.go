@@ -1,8 +1,6 @@
 package reports
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/bartlettc22/image-inquisitor/internal/imageUtils"
@@ -38,10 +36,16 @@ func (rl *summaryReportList) Add(reportType ReportType, reportContents interface
 	}
 }
 
-func (rl *summaryReportList) Output() {
+// Output writes every summary report and returns the first error; see
+// imageReportList.Output.
+func (rl *summaryReportList) Output() error {
+	var first error
 	for _, report := range rl.reports {
-		report.output()
+		if err := report.output(); err != nil && first == nil {
+			first = err
+		}
 	}
+	return first
 }
 
 func (rl *summaryReportList) GenerateSummaryReports(masterImagesList imageUtils.ImagesList, masterImageReportList *imageReportList) {
@@ -116,13 +120,8 @@ func (rl *summaryReportList) GenerateSummaryReports(masterImagesList imageUtils.
 	rl.Add(ReportTypeSummaryRegistry, summaryRegistry)
 }
 
-func (r *summaryReportWrapper) output() {
-	reportOut, err := json.Marshal(r)
-	if err != nil {
-		log.Errorf("error converting '%s' report to JSON; err: %v, out: %v", r.ReportType, err, r)
-	} else {
-		fmt.Println(string(reportOut))
-	}
+func (r *summaryReportWrapper) output() error {
+	return writeJSONLine(r.ReportType, r)
 }
 
 type summaryReport struct {

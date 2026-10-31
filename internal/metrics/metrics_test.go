@@ -1,8 +1,11 @@
 package metrics
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEscapesLabelValues(t *testing.T) {
@@ -51,5 +54,37 @@ func TestNoEndpointIsNotAnError(t *testing.T) {
 	p.Gauge("m", "h", nil, 1)
 	if err := p.Push(0); err != nil {
 		t.Errorf("publishing should be a no-op when disabled, got %v", err)
+	}
+}
+
+func TestRedact(t *testing.T) {
+	cases := map[string]string{
+		"http://u:p@vm.example.lan:8428/api": "http://u:xxxxx@vm.example.lan:8428/api",
+		"http://vm.example.lan:8428/api":     "http://vm.example.lan:8428/api",
+		"http://[::1%zz/":                    "<unparseable url>",
+	}
+	for in, want := range cases {
+		if got := Redact(in); got != want {
+			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPushErrorRedactsCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	endpoint := strings.Replace(srv.URL, "http://", "http://u:s3cret@", 1)
+	for _, ep := range []string{endpoint, strings.Replace(endpoint, srv.URL[len("http://"):], "127.0.0.1:1", 1)} {
+		p := NewPublisher(ep)
+		p.Gauge("m", "h", nil, 1)
+		err := p.Push(2 * time.Second)
+		if err == nil {
+			t.Fatalf("push to %s should fail", Redact(ep))
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("push error leaks the password: %v", err)
+		}
 	}
 }

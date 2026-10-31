@@ -14,9 +14,11 @@ package metrics
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -77,11 +79,23 @@ func (p *Publisher) Gauge(name, helpText string, labels map[string]string, value
 // Payload returns what would be pushed. Exposed for tests and for --dry-run.
 func (p *Publisher) Payload() string { return p.buf.String() }
 
+// Redact returns raw with any URL password masked, safe to log. A string that
+// does not parse as a URL is replaced entirely, since there is no way to know
+// which part of it is the secret.
+func Redact(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<unparseable url>"
+	}
+	return u.Redacted()
+}
+
 // Push sends the accumulated samples.
 //
-// A failure here must never fail the scan: the log reports are the system of
-// record and are already written by this point. The caller logs the error and
-// carries on.
+// A failure here must never fail the scan: the reports have already been
+// written by the time the caller pushes. The caller logs the error and carries
+// on. Errors name the endpoint only in redacted form, because the endpoint may
+// embed basic-auth credentials.
 func (p *Publisher) Push(timeout time.Duration) error {
 	if p.endpoint == "" {
 		return nil
@@ -89,15 +103,22 @@ func (p *Publisher) Push(timeout time.Duration) error {
 	if p.buf.Len() == 0 {
 		return fmt.Errorf("refusing to push an empty payload")
 	}
+	endpoint := Redact(p.endpoint)
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Post(p.endpoint, "text/plain", bytes.NewReader(p.buf.Bytes()))
 	if err != nil {
-		return fmt.Errorf("pushing metrics to %s: %w", p.endpoint, err)
+		// A *url.Error repeats the request URL; report only its cause so the
+		// redacted endpoint above is the only form that reaches the log.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return fmt.Errorf("pushing metrics to %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("pushing metrics to %s: HTTP %d: %s", p.endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("pushing metrics to %s: HTTP %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }
