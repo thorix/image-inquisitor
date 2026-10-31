@@ -30,7 +30,7 @@ func NewKubernetesSource(config *KubernetesSourceConfig) *KubernetesSource {
 	}
 }
 
-func (s *KubernetesSource) GetReport(ctx context.Context) (map[string]*types.ImageSourceDetails, error) {
+func (s *KubernetesSource) GetReport(ctx context.Context) (map[string]*types.ImageSourceDetails, *kubernetes.ListStats, error) {
 
 	var err error
 
@@ -40,15 +40,15 @@ func (s *KubernetesSource) GetReport(ctx context.Context) (map[string]*types.Ima
 			ExcludeNamespaces: s.ExcludeNamespaces,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("%v", err)
+			return nil, nil, fmt.Errorf("%v", err)
 		}
 	}
 
 	details := make(map[string]*types.ImageSourceDetails)
 
-	kubeReport, err := s.client.GetReport()
+	kubeReport, listStats, err := s.client.GetReport(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error listing images from Kubernetes: %s", err.Error())
+		return nil, listStats, fmt.Errorf("error listing images from Kubernetes: %w", err)
 	}
 
 	for image, kubeImageReport := range kubeReport {
@@ -60,7 +60,7 @@ func (s *KubernetesSource) GetReport(ctx context.Context) (map[string]*types.Ima
 		}
 	}
 
-	return details, nil
+	return details, listStats, nil
 }
 
 func (s *KubernetesSourceReport) KubeReports() map[string]*kubernetes.KubernetesImageReport {

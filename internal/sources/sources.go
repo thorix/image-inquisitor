@@ -31,9 +31,15 @@ func GetInventoryFromSources(ctx context.Context, config *ImageSourcesConfig) (*
 		switch sourceType {
 		case types.ImageSourceTypeKubernetes:
 			kubernetesSource := NewKubernetesSource(config.KubernetesSourceConfig)
-			kubernetesSourceReport, err := kubernetesSource.GetReport(ctx)
+			kubernetesSourceReport, listStats, err := kubernetesSource.GetReport(ctx)
 			if err != nil {
 				return nil, err
+			}
+			if listStats != nil {
+				inventory.Stats.ListFailures += listStats.Total()
+				for ns, n := range listStats.FailedLists {
+					inventory.Stats.NamespaceListFailures[ns] += n
+				}
 			}
 			if err := inventory.AddImageSourceDetails(config.SourceID, kubernetesSourceReport); err != nil {
 				log.Warnf("some %s images could not be parsed: %v", sourceType, err)
