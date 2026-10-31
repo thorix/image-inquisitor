@@ -136,7 +136,7 @@ func scanOne(ctx context.Context, id int, outputDir string, scanTimeout time.Dur
 
 	cmd := exec.CommandContext(scanCtx, "trivy", "image", "--quiet", "--timeout", trivyTimeout, "--format", "json", "--output", outputFile, "--", image)
 	// Do not wait forever on pipes held open by grandchildren after the kill.
-	cmd.WaitDelay = 2 * time.Second
+	cmd.WaitDelay = 3 * time.Second
 
 	output, err := cmd.CombinedOutput()
 	result.Output = string(output)

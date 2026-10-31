@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// installFakeTrivy writes a fake trivy script and prepends it to PATH.
-func installFakeTrivy(t *testing.T) {
+// t2InstallFakeTrivy writes a fake trivy script and prepends it to PATH.
+func t2InstallFakeTrivy(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	script := `#!/bin/sh
@@ -35,7 +35,7 @@ done
 if [ "$before" != "--" ] || [ $has_timeout -ne 1 ]; then exit 2; fi
 case "$last" in
   example.lan/fail:1) exit 1 ;;
-  example.lan/slow:1) sleep 30 ;;
+  example.lan/slow:1) exec sleep 30 ;;
   example.lan/badjson:1) echo "not json" > "$out" ;;
   *) printf '{"SchemaVersion":2,"ArtifactName":"%s","Results":[]}' "$last" > "$out" ;;
 esac
@@ -47,7 +47,7 @@ esac
 }
 
 func TestFailuresAreCountedAndIsolated(t *testing.T) {
-	installFakeTrivy(t)
+	t2InstallFakeTrivy(t)
 	tr := NewTrivyRunner(TrivyRunnerConfig{
 		Images:      []string{"example.lan/ok:1", "example.lan/fail:1", "example.lan/slow:1", "example.lan/badjson:1"},
 		NumWorkers:  2,
@@ -76,7 +76,7 @@ func TestFailuresAreCountedAndIsolated(t *testing.T) {
 }
 
 func TestOutputFilesDoNotCollide(t *testing.T) {
-	installFakeTrivy(t)
+	t2InstallFakeTrivy(t)
 	out := t.TempDir()
 	images := []string{"example.lan/a_b/c:1", "example.lan/a/b_c:1"}
 	tr := NewTrivyRunner(TrivyRunnerConfig{Images: images, NumWorkers: 2, OutputDir: out})
