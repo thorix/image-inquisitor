@@ -2,10 +2,10 @@ SHELL := /bin/bash
 VERSION ?= $(shell cat ./VERSION)
 REGISTRY := ghcr.io/bartlettc22
 DOCKER_IMAGE := $(REGISTRY)/image-inquisitor:$(VERSION)
-GO_VERSION ?= 1.22.3
+GO_VERSION ?= 1.27.3
 GOLANGCI_VERSION := golangci/golangci-lint:v1.60.3
 GO_FILES_NO_VENDOR := $(shell find ./* -name "*.go" -not -path "./vendor/*")
-TRIVY_VERSION ?= 0.54.1
+TRIVY_VERSION ?= 0.76.1
 DOCKER_RUN_FLAGS := --rm -u $$(id -u $${USER}):$$(id -g $${USER})
 
 .PHONY: build-image

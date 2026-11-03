@@ -21,7 +21,10 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"cloud.google.com/go/internal"
 	"cloud.google.com/go/internal/version"
@@ -38,16 +41,74 @@ var defaultRetry *retryConfig = &retryConfig{}
 var xGoogDefaultHeader = fmt.Sprintf("gl-go/%s gccl/%s", version.Go(), sinternal.Version)
 
 const (
-	xGoogHeaderKey       = "x-goog-api-client"
-	idempotencyHeaderKey = "x-goog-gcs-idempotency-token"
+	xGoogHeaderKey            = "x-goog-api-client"
+	idempotencyHeaderKey      = "x-goog-gcs-idempotency-token"
+	cookieHeaderKey           = "cookie"
+	directpathCookieHeaderKey = "x-directpath-tracing-cookie"
 )
+
+var (
+	cookieHeader = sync.OnceValue(func() string {
+		return os.Getenv("GOOGLE_SDK_GO_TRACING_COOKIE")
+	})
+)
+
+// runShouldRetry calls the configured shouldRetry function if it exists,
+// otherwise it falls back to the default ShouldRetry function.
+func (r *retryConfig) runShouldRetry(err error, retryCtx *RetryContext) bool {
+	if r == nil || r.shouldRetry == nil {
+		return ShouldRetry(err)
+	}
+
+	return r.shouldRetry(err, retryCtx)
+}
+
+// runOptions holds optional metadata for retry contexts.
+type runOptions struct {
+	operation string
+	bucket    string
+	object    string
+}
+
+// runOption configures optional metadata for retry contexts.
+type runOption func(*runOptions)
+
+// withOperation specifies the operation name for retry context.
+func withOperation(op string) runOption {
+	return func(o *runOptions) { o.operation = op }
+}
+
+// withBucket specifies the bucket name for retry context.
+func withBucket(bucket string) runOption {
+	return func(o *runOptions) { o.bucket = bucket }
+}
+
+// withObject specifies the object name for retry context.
+func withObject(object string) runOption {
+	return func(o *runOptions) { o.object = object }
+}
 
 // run determines whether a retry is necessary based on the config and
 // idempotency information. It then calls the function with or without retries
 // as appropriate, using the configured settings.
-func run(ctx context.Context, call func(ctx context.Context) error, retry *retryConfig, isIdempotent bool) error {
+// TODO: consider replacing the functional option (runOption) pattern with a
+// hardcoded struct based approach if parameter related changes requires for all
+// the callers. Ref: http://shortn/_ciY2iWLh2J
+func run(ctx context.Context, call func(ctx context.Context) error, retry *retryConfig, isIdempotent bool, opts ...runOption) error {
+	options := &runOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	attempts := 1
 	invocationID := uuid.New().String()
+	retryCtx := &RetryContext{
+		Attempt:      attempts,
+		InvocationID: invocationID,
+		Operation:    options.operation,
+		Bucket:       options.bucket,
+		Object:       options.object,
+	}
 
 	if retry == nil {
 		retry = defaultRetry
@@ -62,19 +123,43 @@ func run(ctx context.Context, call func(ctx context.Context) error, retry *retry
 		bo.Initial = retry.backoff.Initial
 		bo.Max = retry.backoff.Max
 	}
-	var errorFunc func(err error) bool = ShouldRetry
-	if retry.shouldRetry != nil {
-		errorFunc = retry.shouldRetry
+
+	var quitAfterTimer *time.Timer
+	if retry.maxRetryDuration != 0 {
+		quitAfterTimer = time.NewTimer(retry.maxRetryDuration)
+		defer quitAfterTimer.Stop()
 	}
 
+	var lastErr error
 	return internal.Retry(ctx, bo, func() (stop bool, err error) {
-		ctxWithHeaders := setInvocationHeaders(ctx, invocationID, attempts)
-		err = call(ctxWithHeaders)
-		if retry.maxAttempts != nil && attempts >= *retry.maxAttempts {
-			return true, err
+		if retry.maxRetryDuration != 0 {
+			select {
+			case <-quitAfterTimer.C:
+				if lastErr == nil {
+					return true, fmt.Errorf("storage: request not sent, choose a larger value for the retry deadline (currently set to %s)", retry.maxRetryDuration)
+				}
+				return true, fmt.Errorf("storage: retry deadline of %s reached after %v attempts; last error: %w", retry.maxRetryDuration, attempts, lastErr)
+			default:
+			}
 		}
+
+		ctxWithHeaders := setInvocationHeaders(ctx, invocationID, attempts)
+		lastErr = call(ctxWithHeaders)
+		if lastErr != nil && retry.maxAttempts != nil && attempts >= *retry.maxAttempts {
+			return true, fmt.Errorf("storage: retry failed after %v attempts; last error: %w", *retry.maxAttempts, lastErr)
+		}
+
+		retryCtx.Attempt = attempts
+		retryable := retry.runShouldRetry(lastErr, retryCtx)
 		attempts++
-		return !errorFunc(err), err
+		// Explicitly check context cancellation so that we can distinguish between a
+		// DEADLINE_EXCEEDED error from the server and a user-set context deadline.
+		// Unfortunately gRPC will codes.DeadlineExceeded (which may be retryable if it's
+		// sent by the server) in both cases.
+		if ctxErr := ctx.Err(); errors.Is(ctxErr, context.Canceled) || errors.Is(ctxErr, context.DeadlineExceeded) {
+			retryable = false
+		}
+		return !retryable, lastErr
 	})
 }
 
@@ -86,6 +171,12 @@ func setInvocationHeaders(ctx context.Context, invocationID string, attempts int
 
 	ctx = callctx.SetHeaders(ctx, xGoogHeaderKey, xGoogHeader)
 	ctx = callctx.SetHeaders(ctx, idempotencyHeaderKey, invocationID)
+
+	if c := cookieHeader(); c != "" {
+		ctx = callctx.SetHeaders(ctx, cookieHeaderKey, c)
+		ctx = callctx.SetHeaders(ctx, directpathCookieHeaderKey, c)
+	}
+
 	return ctx
 }
 
@@ -105,41 +196,68 @@ func ShouldRetry(err error) bool {
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
 
 	switch e := err.(type) {
-	case *net.OpError:
-		if strings.Contains(e.Error(), "use of closed network connection") {
-			// TODO: check against net.ErrClosed (go 1.16+) instead of string
-			return true
-		}
 	case *googleapi.Error:
 		// Retry on 408, 429, and 5xx, according to
 		// https://cloud.google.com/storage/docs/exponential-backoff.
 		return e.Code == 408 || e.Code == 429 || (e.Code >= 500 && e.Code < 600)
-	case *url.Error:
-		// Retry socket-level errors ECONNREFUSED and ECONNRESET (from syscall).
+	case *net.OpError, *url.Error:
+		// Retry socket-level errors ECONNREFUSED and ECONNRESET (from syscall)
+		// and transport-level errors like server closed idle connections.
 		// Unfortunately the error type is unexported, so we resort to string
 		// matching.
-		retriable := []string{"connection refused", "connection reset"}
+		retriable := []string{"connection refused", "connection reset", "broken pipe", "client connection lost", "server closed idle connection"}
 		for _, s := range retriable {
 			if strings.Contains(e.Error(), s) {
 				return true
 			}
+		}
+		// TODO: remove when https://github.com/golang/go/issues/53472 is resolved.
+		// We don't want to retry io.EOF errors, since these can indicate normal
+		// functioning terminations such as internally in the case of Reader and
+		// externally in the case of iterator methods. However, the linked bug
+		// requires us to retry the EOFs that it causes, which should be wrapped
+		// in net or url errors.
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+	case *net.DNSError:
+		if e.IsTemporary {
+			return true
 		}
 	case interface{ Temporary() bool }:
 		if e.Temporary() {
 			return true
 		}
 	}
-	// UNAVAILABLE, RESOURCE_EXHAUSTED, and INTERNAL codes are all retryable for gRPC.
+	// UNAVAILABLE, RESOURCE_EXHAUSTED, INTERNAL, and DEADLINE_EXCEEDED codes are all retryable for gRPC.
 	if st, ok := status.FromError(err); ok {
-		if code := st.Code(); code == codes.Unavailable || code == codes.ResourceExhausted || code == codes.Internal {
+		if code := st.Code(); code == codes.Unavailable || code == codes.ResourceExhausted || code == codes.Internal || code == codes.DeadlineExceeded {
 			return true
 		}
 	}
 	// Unwrap is only supported in go1.13.x+
 	if e, ok := err.(interface{ Unwrap() error }); ok {
 		return ShouldRetry(e.Unwrap())
+	}
+	return false
+}
+
+func isError(err error, httpErrorCode int, grpcErrorCode codes.Code) bool {
+	var e *googleapi.Error
+	if errors.As(err, &e) {
+		if e.Code == httpErrorCode {
+			return true
+		}
+	}
+	if s, ok := status.FromError(err); ok {
+		if s.Code() == grpcErrorCode {
+			return true
+		}
 	}
 	return false
 }
