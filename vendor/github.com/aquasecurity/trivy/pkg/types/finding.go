@@ -1,5 +1,11 @@
 package types
 
+import (
+	"encoding/json"
+
+	"golang.org/x/xerrors"
+)
+
 type FindingType string
 type FindingStatus string
 
@@ -19,8 +25,8 @@ const (
 
 // Finding represents one of the findings that Trivy can detect,
 // such as vulnerabilities, misconfigurations, secrets, and licenses.
-type finding interface {
-	findingType() FindingType
+type Finding interface {
+	FindingType() FindingType
 }
 
 // ModifiedFinding represents a security finding that has been modified by an external source,
@@ -33,15 +39,56 @@ type ModifiedFinding struct {
 	Status    FindingStatus
 	Statement string
 	Source    string
-	Finding   finding // one of findings
+	Finding   Finding // one of findings
 }
 
-func NewModifiedFinding(f finding, status FindingStatus, statement, source string) ModifiedFinding {
+func NewModifiedFinding(f Finding, status FindingStatus, statement, source string) ModifiedFinding {
 	return ModifiedFinding{
-		Type:      f.findingType(),
+		Type:      f.FindingType(),
 		Status:    status,
 		Statement: statement,
 		Source:    source,
 		Finding:   f,
 	}
+}
+
+// UnmarshalJSON unmarshals ModifiedFinding given the type and `UnmarshalJSON` functions of struct fields
+func (m *ModifiedFinding) UnmarshalJSON(data []byte) error {
+	type Alias ModifiedFinding
+	aux := &struct {
+		Finding json.RawMessage `json:"Finding"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Select struct by m.Type to avoid errors with Unmarshal
+	var err error
+	switch m.Type {
+	case FindingTypeVulnerability:
+		m.Finding, err = unmarshalFinding[DetectedVulnerability](aux.Finding)
+	case FindingTypeMisconfiguration:
+		m.Finding, err = unmarshalFinding[DetectedMisconfiguration](aux.Finding)
+	case FindingTypeSecret:
+		m.Finding, err = unmarshalFinding[DetectedSecret](aux.Finding)
+	case FindingTypeLicense:
+		m.Finding, err = unmarshalFinding[DetectedLicense](aux.Finding)
+	default:
+		return xerrors.Errorf("invalid Finding type: %s", m.Type)
+	}
+
+	if err != nil {
+		return xerrors.Errorf("unable to unmarshal %q type: %w", m.Type, err)
+	}
+	return nil
+}
+
+func unmarshalFinding[T Finding](data []byte) (T, error) {
+	var f T
+	err := json.Unmarshal(data, &f)
+	return f, err
 }

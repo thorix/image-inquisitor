@@ -14,6 +14,15 @@ type (
 	ConfigType = TargetType
 )
 
+// Supplier identifies a third party that rebuilds and ships packages e.g. Seal Security.
+type Supplier string
+
+// Suppliers
+const (
+	SupplierSeal      Supplier = "seal"
+	SupplierRapidFort Supplier = "rapidfort"
+)
+
 const (
 	ArtifactJSONSchemaVersion = 1
 	BlobJSONSchemaVersion     = 2
@@ -21,26 +30,73 @@ const (
 
 // Operating systems
 const (
+	ActiveState        OSType = "activestate"
 	Alma               OSType = "alma"
 	Alpine             OSType = "alpine"
 	Amazon             OSType = "amazon"
 	Azure              OSType = "azurelinux"
+	Bottlerocket       OSType = "bottlerocket"
 	CBLMariner         OSType = "cbl-mariner"
 	CentOS             OSType = "centos"
+	CentOSStream       OSType = "centos-stream"
 	Chainguard         OSType = "chainguard"
+	CoreOS             OSType = "coreos"
 	Debian             OSType = "debian"
+	Echo               OSType = "echo"
 	Fedora             OSType = "fedora"
+	MinimOS            OSType = "minimos"
 	OpenSUSE           OSType = "opensuse"
-	OpenSUSELeap       OSType = "opensuse.leap"
-	OpenSUSETumbleweed OSType = "opensuse.tumbleweed"
+	OpenSUSELeap       OSType = "opensuse-leap"
+	OpenSUSETumbleweed OSType = "opensuse-tumbleweed"
 	Oracle             OSType = "oracle"
 	Photon             OSType = "photon"
 	RedHat             OSType = "redhat"
 	Rocky              OSType = "rocky"
-	SLES               OSType = "suse linux enterprise server"
+	SLEMicro           OSType = "slem"
+	SLES               OSType = "sles"
 	Ubuntu             OSType = "ubuntu"
 	Wolfi              OSType = "wolfi"
 )
+
+// HasOSPackages returns true if the OS type has OS-level packages managed by a package manager.
+// Some OS types like ActiveState only contain language-specific packages.
+func (o OSType) HasOSPackages() bool {
+	switch o {
+	case ActiveState:
+		return false
+	default:
+		return true
+	}
+}
+
+// PurlNamespace returns the normalized namespace for Package URL (PURL) representation.
+// For SUSE-based distributions (SLES, SLE Micro), it returns "suse".
+// For openSUSE variants (Tumbleweed, Leap), it returns "opensuse".
+// For all other OSTypes, it returns the string representation of the OSType.
+func (o OSType) PurlNamespace() string {
+	// SLES string has whitespace, also highlevel family is not the same as distro
+	if o == SLES || o == SLEMicro {
+		return "suse"
+	}
+	if o == OpenSUSETumbleweed || o == OpenSUSELeap {
+		return "opensuse"
+	}
+
+	return string(o)
+}
+
+// OSTypeAliases is a map of aliases for operating systems.
+var OSTypeAliases = map[OSType]OSType{
+	// This is used to map the old family names to the new ones for backward compatibility.
+	"opensuse.leap":                OpenSUSELeap,
+	"opensuse.tumbleweed":          OpenSUSETumbleweed,
+	"suse linux enterprise micro":  SLEMicro,
+	"suse linux enterprise server": SLES,
+	// This is used to map OS names in EKS
+	"amazon linux": Amazon,
+	// This is used to map OS names in Kind
+	"debian gnu/linux": Debian,
+}
 
 // Programming language dependencies
 const (
@@ -50,12 +106,15 @@ const (
 	Composer       LangType = "composer"
 	ComposerVendor LangType = "composer-vendor"
 	Npm            LangType = "npm"
+	Bun            LangType = "bun"
 	NuGet          LangType = "nuget"
 	DotNetCore     LangType = "dotnet-core"
 	PackagesProps  LangType = "packages-props"
 	Pip            LangType = "pip"
 	Pipenv         LangType = "pipenv"
 	Poetry         LangType = "poetry"
+	Uv             LangType = "uv"
+	PyLock         LangType = "pylock"
 	CondaPkg       LangType = "conda-pkg"
 	CondaEnv       LangType = "conda-environment"
 	PythonPkg      LangType = "python-pkg"
@@ -86,17 +145,48 @@ const (
 	OCP         LangType = "ocp" // Red Hat OpenShift Container Platform
 )
 
-var AggregatingTypes = []LangType{
-	PythonPkg,
-	CondaPkg,
-	GemSpec,
-	NodePkg,
-	Jar,
-}
+var (
+	OSTypes = []OSType{
+		ActiveState,
+		Alma,
+		Alpine,
+		Amazon,
+		Azure,
+		Bottlerocket,
+		CBLMariner,
+		CentOS,
+		CentOSStream,
+		Chainguard,
+		CoreOS,
+		Debian,
+		Echo,
+		Fedora,
+		MinimOS,
+		OpenSUSE,
+		OpenSUSELeap,
+		OpenSUSETumbleweed,
+		Oracle,
+		Photon,
+		RedHat,
+		Rocky,
+		SLEMicro,
+		SLES,
+		Ubuntu,
+		Wolfi,
+	}
+	AggregatingTypes = []LangType{
+		PythonPkg,
+		CondaPkg,
+		GemSpec,
+		NodePkg,
+		Jar,
+	}
+)
 
 // Config files
 const (
 	JSON                  ConfigType = "json"
+	YAML                  ConfigType = "yaml"
 	Dockerfile            ConfigType = "dockerfile"
 	Terraform             ConfigType = "terraform"
 	TerraformPlanJSON     ConfigType = "terraformplan"
@@ -106,6 +196,7 @@ const (
 	Helm                  ConfigType = "helm"
 	Cloud                 ConfigType = "cloud"
 	AzureARM              ConfigType = "azure-arm"
+	Ansible               ConfigType = "ansible"
 )
 
 // Language-specific file names
@@ -123,6 +214,7 @@ const (
 	NpmPkgLock = "package-lock.json"
 	YarnLock   = "yarn.lock"
 	PnpmLock   = "pnpm-lock.yaml"
+	BunLock    = "bun.lock"
 
 	ComposerLock          = "composer.lock"
 	ComposerJson          = "composer.json"
@@ -132,6 +224,8 @@ const (
 	PipRequirements = "requirements.txt"
 	PipfileLock     = "Pipfile.lock"
 	PoetryLock      = "poetry.lock"
+	UvLock          = "uv.lock"
+	PyLockFile      = "pylock.toml"
 
 	GemfileLock = "Gemfile.lock"
 

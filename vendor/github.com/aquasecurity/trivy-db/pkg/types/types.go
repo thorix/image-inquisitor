@@ -81,14 +81,15 @@ type VulnerabilityDetail struct {
 	References       []string   `json:",omitempty"`
 	Title            string     `json:",omitempty"`
 	Description      string     `json:",omitempty"`
-	PublishedDate    *time.Time `json:",omitempty"` // Take from NVD
-	LastModifiedDate *time.Time `json:",omitempty"` // Take from NVD
+	PublishedDate    *time.Time `json:",omitempty"` // Take from NVD or GHSA
+	LastModifiedDate *time.Time `json:",omitempty"` // Take from NVD or GHSA
+	Status           string     `json:"-"`          // Rejected or not, also not stored in db
 }
 
 type AdvisoryDetail struct {
 	PlatformName string
 	PackageName  string
-	AdvisoryItem interface{}
+	AdvisoryItem any
 }
 
 // SourceID represents data source such as NVD.
@@ -98,12 +99,17 @@ type DataSource struct {
 	ID   SourceID `json:",omitempty"`
 	Name string   `json:",omitempty"`
 	URL  string   `json:",omitempty"`
+
+	// BaseID shows Base source of advisories.
+	// e.g. `Root.io` based on Debian/Ubuntu/Alpine advisories.
+	BaseID SourceID `json:",omitzero"`
 }
 
 type Advisory struct {
 	VulnerabilityID string   `json:",omitempty"` // CVE-ID or vendor ID
 	VendorIDs       []string `json:",omitempty"` // e.g. RHSA-ID and DSA-ID
 
+	OSes   []string `json:",omitempty"`
 	Arches []string `json:",omitempty"`
 
 	// It is filled only when FixedVersion is empty since it is obvious the state is "Fixed" when FixedVersion is not empty.
@@ -130,7 +136,7 @@ type Advisory struct {
 	DataSource *DataSource `json:",omitempty"`
 
 	// Custom is basically for extensibility and is not supposed to be used in OSS
-	Custom interface{} `json:",omitempty"`
+	Custom any `json:",omitempty"`
 }
 
 // _Advisory is an internal struct for Advisory to avoid infinite MarshalJSON loop.
@@ -171,13 +177,20 @@ type Advisories struct {
 	FixedVersion string     `json:",omitempty"` // For backward compatibility
 	Entries      []Advisory `json:",omitempty"`
 	// Custom is basically for extensibility and is not supposed to be used in OSS
-	Custom interface{} `json:",omitempty"` // For backward compatibility
+	Custom any `json:",omitempty"` // For backward compatibility
 }
 
 type Vulnerability struct {
-	Title            string         `json:",omitempty"`
-	Description      string         `json:",omitempty"`
-	Severity         string         `json:",omitempty"` // Selected from VendorSeverity, depending on a scan target
+	Title       string `json:",omitempty"`
+	Description string `json:",omitempty"`
+
+	// Severity is the severity selected from VendorSeverity, depending on a scan target.
+	//
+	// Deprecated: Use VendorSeverity instead of Severity.
+	// Severity isn't related to a SourceID, so consumers can't tell the source of this severity.
+	// Kept for backward compatibility and will be removed at the next schema bump (Trivy DB v3).
+	Severity string `json:",omitempty"`
+
 	CweIDs           []string       `json:",omitempty"` // e.g. CWE-78, CWE-89
 	VendorSeverity   VendorSeverity `json:",omitempty"`
 	CVSS             VendorCVSS     `json:",omitempty"`
@@ -186,8 +199,5 @@ type Vulnerability struct {
 	LastModifiedDate *time.Time     `json:",omitempty"` // Take from NVD
 
 	// Custom is basically for extensibility and is not supposed to be used in OSS
-	Custom interface{} `json:",omitempty"`
+	Custom any `json:",omitempty"`
 }
-
-// Ecosystem represents language-specific ecosystem
-type Ecosystem string

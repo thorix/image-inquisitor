@@ -1,7 +1,8 @@
 .PHONY: test clean lint
 
 test:
-	curl -Ls https://raw.githubusercontent.com/package-url/purl-spec/master/test-suite-data.json -o testdata/test-suite-data.json
+	git submodule update --init
+	git submodule update --remote
 	go test -v -cover ./...
 
 fuzz:

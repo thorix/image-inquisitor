@@ -1,6 +1,8 @@
 package types
 
 import (
+	"crypto/x509"
+
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
@@ -53,6 +55,7 @@ type ImageOptions struct {
 	PodmanOptions     PodmanOptions
 	ContainerdOptions ContainerdOptions
 	ImageSources      ImageSources
+	MaxImageSize      int64
 }
 
 type DockerOptions struct {
@@ -81,12 +84,12 @@ type RegistryOptions struct {
 	// RegistryToken is a bearer token to be sent to a registry
 	RegistryToken string
 
+	// RegistryMirrors is a map of hosts with mirrors for them
+	RegistryMirrors map[string][]string
+
 	// SSL/TLS
 	Insecure bool
-
-	// For internal use. Needed for mTLS authentication.
-	ClientCert []byte
-	ClientKey  []byte
+	CACerts  *x509.CertPool
 
 	// Architecture
 	Platform Platform
